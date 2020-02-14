@@ -51,6 +51,13 @@
 /******************************************************************************/
 
 /**
+ *
+ * @param context
+ * @param extra
+ */
+typedef void (*irq_callback)(void *context, void *extra);
+
+/**
  * @struct irq_init_param
  * @brief Structure holding the initial parameters for Interrupt Request.
  */
@@ -87,12 +94,13 @@ int32_t irq_ctrl_remove(struct irq_ctrl_desc *desc);
  * @brief Registers a IRQ handling function to irq controller.
  * @param desc - The IRQ controller descriptor.
  * @param irq_id - Interrupt identifier.
- * @param irq_handler - The IRQ handler.
- * @param dev_instance - device instance.
+ * @param irq_handler - The IRQ handler. The extra param will be plaftorm specific
+ * @param context - Parameter given by the aplication
+ * @param config - Platform specific configuration for the irq
  * @return SUCCESS in case of success, FAILURE otherwise.
  */
 int32_t irq_register(struct irq_ctrl_desc *desc, uint32_t irq_id,
-		     void (*irq_handler)(void *data), void *dev_instance);
+		irq_callback callback, void *context, void *config);
 
 /* Unregisters a generic IRQ handling function */
 int32_t irq_unregister(struct irq_ctrl_desc *desc, uint32_t irq_id);
