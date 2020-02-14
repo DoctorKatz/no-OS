@@ -38,30 +38,40 @@
 *******************************************************************************/
 
 #ifndef IRQ_EXTRA_H
-# define IRQ_EXTRA_H
+#define IRQ_EXTRA_H
 
 /******************************************************************************/
 /***************************** Include Files **********************************/
 /******************************************************************************/
 
 #include <drivers/xint/adi_xint.h>
-
-/******************************************************************************/
-/********************** Macros and Constants Definitions **********************/
-/******************************************************************************/
-
-/** Number of available external interrupts */
-#define NB_EXT_INTERRUPTS	4u
+#include "irq.h"
+#include "uart_extra.h"
 
 /******************************************************************************/
 /*************************** Types Declarations *******************************/
 /******************************************************************************/
 
+/** Number of available interrupts */
+#define NB_INTERRUPTS	5u
+
+/**
+ * @enum irq_mode
+ * @brief Interrupts handled by the controller
+ */
+enum irq_id {
+	EXTERNAL_INT0,
+	EXTERNAL_INT1,
+	EXTERNAL_INT2,
+	EXTERNAL_INT3,
+	UART_INT
+};
+
 /**
  * @enum irq_mode
  * @brief Trigger condition for the external interrupt
  */
-enum irq_mode {
+enum external_irq_mode {
 	/** Rising edge */
 	IRQ_RISING_EDGE		= ADI_XINT_IRQ_RISING_EDGE,
 	/** Falling edge */
@@ -74,15 +84,41 @@ enum irq_mode {
 	IRQ_LOW_LEVEL		= ADI_XINT_IRQ_LOW_LEVEL
 };
 
+
+union irq_config_param {
+	/** Used to configure external interrupts */
+	enum external_irq_mode	xint_conf;
+	/** Used to configure uart_interrupt */
+	//struct uart_desc	*uart_desc;
+	struct uart_irq_config	uart_conf;
+};
+
+
+struct extra_param {
+	uint32_t	event;
+	void		*arg;
+};
+
+struct irq_desc {
+	/** Interrupt id */
+	enum irq_id		irq_id;
+	/** Callback that will be called when the interrupt occurs*/
+	irq_callback 		irq_handler;
+	/** Trigger condition for the external interrupt */
+	union irq_config_param	config;
+	/** Platform specific parameter */
+	struct extra_param	extra;
+	/** Context for irqs */
+	void			*application_ctx;
+};
+
 /**
  * @struct aducm_irq_desc
  * @brief Stores specific platform parameters
  */
 struct aducm_irq_desc {
-	/** Callback that will be called when the interrupt occurs*/
-	void 			(*irq_handler[NB_EXT_INTERRUPTS])(void *irq_id);
-	/** Trigger condition for the external interrupt */
-	enum irq_mode		mode[NB_EXT_INTERRUPTS];
+	/** Context for each interrupt */
+	struct irq_desc		irq_desc[NB_INTERRUPTS];
 	/** Memory needed by the ADI IRQ driver */
 	uint8_t			irq_memory[ADI_XINT_MEMORY_SIZE];
 	/** Stores the enabled interrupts */

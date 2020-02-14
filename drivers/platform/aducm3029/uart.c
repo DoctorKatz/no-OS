@@ -171,15 +171,18 @@ static void uart_callback(void *desc, uint32_t event, void *buff)
 	switch(event) {
 	case ADI_UART_EVENT_RX_BUFFER_PROCESSED:
 		extra->waiting_read_callback--;
-		extra->callback(extra->param, READ_DONE, buff);
+		if (extra->callback && extra->uart_mode == NONBLOCKING_MODE)
+			extra->callback(extra->param, READ_DONE, buff);
 		break;
 	case ADI_UART_EVENT_TX_BUFFER_PROCESSED:
 		extra->waiting_write_callback--;
-		extra->callback(extra->param, WRITE_DONE, buff);
+		if (extra->callback && extra->uart_mode == NONBLOCKING_MODE)
+			extra->callback(extra->param, WRITE_DONE, buff);
 		break;
 	default:
 		extra->errors |= (uint32_t)buff;
-		extra->callback(extra->param, ERROR, buff);
+		if (extra->callback)
+			extra->callback(extra->param, ERROR, buff);
 		break;
 	}
 }
@@ -201,12 +204,17 @@ int32_t uart_read(struct uart_desc *desc, uint8_t *data,
 		return FAILURE;
 
 	extra = desc->extra;
+
+	/* If some error occured in a callback or not cleared */
+	if (extra->errors != NO_ERR)
+		return FAILURE;
+
 	if (bytes_number == 0 || bytes_number > MAX_BYTES) {
 		errors = BAD_INPUT_PARAMETERS;
 		goto failure;
 	}
 
-	if (!extra->callback) { //Blocking mode
+	if (extra->uart_mode == BLOCKING_MODE) {
 		if (ADI_UART_SUCCESS != adi_uart_Read(
 			    (ADI_UART_HANDLE const)extra->uart_handler,
 			    (void *const)data,
@@ -246,16 +254,21 @@ int32_t uart_write(struct uart_desc *desc, const uint8_t *data,
 	uint32_t errors;
 	struct aducm_uart_desc *extra;
 
-	if (!desc || !data)
+	if (!desc || !desc->extra || !data)
 		return FAILURE;
 
 	extra = desc->extra;
+
+	/* If some error occured in a callback or not cleared */
+	if (extra->errors != NO_ERR)
+		return FAILURE;
+
 	if (bytes_number == 0 || bytes_number > MAX_BYTES) {
 		errors = BAD_INPUT_PARAMETERS;
 		goto failure;
 	}
 
-	if (!extra->callback) { //Blocking mode
+	if (extra->uart_mode == BLOCKING_MODE) { //Blocking mode
 		if (ADI_UART_SUCCESS != adi_uart_Write(
 			    (ADI_UART_HANDLE const)extra->uart_handler,
 			    (void *const)data,
@@ -324,8 +337,9 @@ int32_t uart_init(struct uart_desc **desc, struct uart_init_param *param)
 
 	(*desc)->baud_rate = param->baud_rate;
 	(*desc)->device_id = param->device_id;
-	aducm_desc->callback = aducm_init_param->callback;
-	aducm_desc->param = aducm_init_param->param;
+	aducm_desc->uart_mode = aducm_init_param->uart_mode;
+	aducm_desc->callback = NULL;
+	aducm_desc->param = NULL;
 	aducm_desc->waiting_read_callback = 0;
 	aducm_desc->waiting_write_callback = 0;
 
@@ -360,11 +374,9 @@ int32_t uart_init(struct uart_desc **desc, struct uart_init_param *param)
 	if (uart_ret != ADI_UART_SUCCESS)
 		goto failure;
 
-	/* Register callback */
-	if (aducm_desc->callback)
-		adi_uart_RegisterCallback(aducm_desc->uart_handler,
-					  uart_callback,
-					  (*desc));
+	adi_uart_RegisterCallback(aducm_desc->uart_handler, uart_callback,
+					(*desc));
+
 	return SUCCESS;
 failure:
 	free_desc_mem(*desc);
@@ -399,9 +411,41 @@ int32_t uart_remove(struct uart_desc *desc)
  */
 uint32_t uart_get_errors(struct uart_desc *desc)
 {
-	struct aducm_uart_desc *extra = desc->extra;
-	uint32_t ret = extra->errors;
-	extra->errors = 0;
+	if (desc == NULL || desc->extra == NULL)
+		return FAILURE;
+
+	struct aducm_uart_desc *aducm_desc = desc->extra;
+	uint32_t ret = aducm_desc->errors;
+	aducm_desc->errors = 0;
 
 	return ret;
 }
+
+/**
+ * @brief Register or unregister UART callback.
+ *
+ * If callback is NULL the callback will be unregistered.
+ * If the driver is operating in \ref BLOCKING_MODE, the callback will only be
+ * called when a \ref DATA_AVAILABLE event occurs.\n
+ * If it is operating in NONBLOCKING_MODE a callback will be generated for each
+ * \ref UART_EVENT .
+ * @param desc - Descriptor of the UART device
+ * @param callback - Callback to be called when an event occurs
+ * @param context - Parameter to be passed to the callback when called.
+ * @return \ref SUCCESS in case of success, \ref FAILURE otherwise.
+ */
+int32_t uart_register_callback(struct uart_desc *desc, UART_CALLBACK callback,
+		void *context)
+{
+	struct aducm_uart_desc *aducm_desc;
+
+	if (desc == NULL || desc->extra == NULL)
+		return FAILURE;
+
+	aducm_desc = desc->extra;
+	aducm_desc->callback = callback;
+	aducm_desc->param = context;
+
+	return SUCCESS;
+}
+

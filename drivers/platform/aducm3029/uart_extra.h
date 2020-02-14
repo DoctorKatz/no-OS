@@ -48,6 +48,7 @@
 #include <drivers/pwr/adi_pwr.h>
 #include <stdint.h>
 #include "error.h"
+#include "uart.h"
 
 /******************************************************************************/
 /*************************** Types Declarations *******************************/
@@ -59,11 +60,11 @@
  */
 enum UART_EVENT {
 	/** Write operation finalized */
-	WRITE_DONE,
+	WRITE_DONE	= 0x0,
 	/** Read operation finalized */
-	READ_DONE,
+	READ_DONE	= 0x1,
 	/** An error occurred */
-	ERROR
+	ERROR		= 0x2
 };
 
 /**
@@ -192,6 +193,24 @@ enum UART_BAUD {
 };
 
 /**
+ * @enum UART_BAUD
+ * @brief Operations modes of the UART drivers
+ */
+enum UART_MODE {
+	/**
+	 * In this mode read and write function will return immediately and if a
+	 * callback is registered, it will be called when the buffer processing
+	 * is done.
+	 */
+	NONBLOCKING_MODE,
+	/**
+	 * In this mode, the functions will return only when the buffers are
+	 * processed.
+	 */
+	BLOCKING_MODE
+};
+
+/**
  * @struct aducm_uart_init_param
  * @brief Stores specific parameter needed to initialize the UART driver for the
  * ADuCM3029 platform
@@ -203,10 +222,8 @@ struct aducm_uart_init_param {
 	enum UART_STOPBITS	stop_bits;
 	/** Set the word length */
 	enum UART_WORDLEN	word_length;
-	/** Set a callback to be called when an operation is done (optional)*/
-	UART_CALLBACK		callback;
-	/** Set a parameter to be passed to the callback as app_param */
-	void			*param;
+	/** Set uart operating mode */
+	enum UART_MODE		uart_mode;
 };
 
 /**
@@ -223,6 +240,8 @@ struct aducm_uart_desc {
 	UART_CALLBACK	callback;
 	/** Set a parameter to be passed to the callback as app_param */
 	void		*param;
+	/** Set UART operating mode */
+	enum UART_MODE	uart_mode;
 	/**
 	 * Buffer needed by the ADI UART driver to operate.
 	 * This buffer allocated and aligned at runtime to 32 bits
@@ -244,5 +263,18 @@ struct aducm_uart_desc {
 	 */
 	uint32_t	waiting_write_callback;
 };
+
+
+struct uart_irq_config {
+	/** For the events from \ref enum UART_EVENT*/
+	uint32_t		event_mask;
+	struct uart_desc	*uart_desc;
+};
+
+
+/** Register UART callback */
+int32_t uart_register_callback(struct uart_desc *desc, UART_CALLBACK callback,
+		void *context);
+
 
 #endif /* UART_H_ */

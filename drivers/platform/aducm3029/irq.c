@@ -43,6 +43,7 @@
 
 #include "irq.h"
 #include "irq_extra.h"
+#include "uart_extra.h"
 #include "error.h"
 #include <stdlib.h>
 
@@ -56,12 +57,17 @@
 /** Number of interrupts controllers available */
 #define NB_INTERRUPT_CONTROLLERS	1u
 
+/** Number of available external interrupts */
+#define NB_EXTERNAL_INTERRUPTS		4u
+
 /** Map the interrupt ID to the ADI_XINT_EVENT associated event */
-static const uint32_t id_map_event[NB_EXT_INTERRUPTS] = {
+static const uint32_t id_map_event[NB_INTERRUPTS] = {
 	ADI_XINT_EVENT_INT0, // ID 0
 	ADI_XINT_EVENT_INT1, // ID 1
 	ADI_XINT_EVENT_INT2, // ID 2
-	ADI_XINT_EVENT_INT3  // ID 3
+	ADI_XINT_EVENT_INT3,  // ID 3
+	//Think to an other id
+	UART_EVT_IRQn  // ID 4
 };
 
 /******************************************************************************/
@@ -74,6 +80,9 @@ static const uint32_t id_map_event[NB_EXT_INTERRUPTS] = {
  */
 static uint32_t		initialized;
 
+
+
+
 /******************************************************************************/
 /************************ Functions Definitions *******************************/
 /******************************************************************************/
@@ -84,14 +93,21 @@ static uint32_t		initialized;
  * @param event - Event that generated the callback
  * @param arg - Unused
  */
-static void internal_callback(void *aducm_desc, uint32_t event, void *arg)
+static void internal_callback(void *ctx, uint32_t event, void *arg)
 {
-	struct aducm_irq_desc *desc = aducm_desc;
-
 	(void)arg;
-
-	if (event < NB_EXT_INTERRUPTS && desc->irq_handler[event])
-		desc->irq_handler[event]((void *)event);
+	struct irq_desc *desc = ctx;
+	desc->extra.event = event;
+	desc->extra.arg = arg;
+	if (desc->irq_handler)
+	{
+		if (desc->irq_id < NB_EXTERNAL_INTERRUPTS)
+			desc->irq_handler(desc->application_ctx, &desc->extra);
+		else if (desc->irq_id == UART_INT)
+			if (event & desc->config.uart_conf.event_mask)
+				desc->irq_handler(desc->application_ctx,
+						&desc->extra);
+	}
 }
 
 /**
@@ -124,10 +140,6 @@ int32_t irq_ctrl_init(struct irq_ctrl_desc **desc,
 
 	adi_xint_Init(aducm_desc->irq_memory, ADI_XINT_MEMORY_SIZE);
 
-	for (uint32_t i = 0; i < NB_EXT_INTERRUPTS; i++)
-		adi_xint_RegisterCallback(id_map_event[i], internal_callback,
-					  aducm_desc);
-
 	initialized = 1;
 	return SUCCESS;
 }
@@ -142,6 +154,7 @@ int32_t irq_ctrl_remove(struct irq_ctrl_desc *desc)
 	if (!desc || !desc->extra || !initialized)
 		return FAILURE;
 
+	//TODO Unregister uart functions
 	initialized = 0;
 	adi_xint_UnInit();
 	free(desc->extra);
@@ -150,28 +163,32 @@ int32_t irq_ctrl_remove(struct irq_ctrl_desc *desc)
 	return SUCCESS;
 }
 
-/**
- * @brief Register IRQ handling function for the specified <em>irq_id</em>.
- * @param desc - Interrupt controller descriptor.
- * @param irq_id - Id of the interrupt
- * @param irq_handler - Generic function to be registered. Will be called using
- * as parameter the interrupt ID.
- * @param dev_instance - Specify the trigger condition for the interrupt. To be
- * one of the values from \ref irq_mode.
- * @return \ref SUCCESS in case of success, \ref FAILURE otherwise.
- */
 int32_t irq_register(struct irq_ctrl_desc *desc, uint32_t irq_id,
-		     void (*irq_handler)(void *data), void *dev_instance)
+		irq_callback callback, void *context, void *config)
 {
-	struct aducm_irq_desc *aducm_desc;
+	struct aducm_irq_desc	*aducm_desc;
+	struct irq_desc		*irq_desc;
+	union irq_config_param	*irq_config;
 
-	if (!desc || !desc->extra || !initialized || !irq_handler ||
-	    irq_id >= NB_EXT_INTERRUPTS)
+	if (!desc || !desc->extra || !initialized || !callback ||
+	    irq_id >= NB_INTERRUPTS || !config)
 		return FAILURE;
 
+	irq_config = config;
 	aducm_desc = desc->extra;
-	aducm_desc->irq_handler[irq_id] = irq_handler;
-	aducm_desc->mode[irq_id] = (enum irq_mode)dev_instance;
+	irq_desc = &aducm_desc->irq_desc[irq_id];
+
+	irq_desc->irq_id = irq_id;
+	irq_desc->irq_handler = callback;
+	irq_desc->config = *irq_config;
+	irq_desc->application_ctx = context;
+
+	if (irq_id < NB_EXTERNAL_INTERRUPTS)
+		adi_xint_RegisterCallback(id_map_event[irq_id],
+				(ADI_CALLBACK)internal_callback, irq_desc);
+	else if (irq_id == UART_INT)
+		uart_register_callback(irq_config->uart_conf.uart_desc,
+				(UART_CALLBACK)internal_callback, irq_desc);
 
 	return SUCCESS;
 }
@@ -185,10 +202,11 @@ int32_t irq_register(struct irq_ctrl_desc *desc, uint32_t irq_id,
 int32_t irq_unregister(struct irq_ctrl_desc *desc, uint32_t irq_id)
 {
 	if (!desc || !desc->extra || !initialized ||
-	    irq_id >= NB_EXT_INTERRUPTS)
+	    irq_id >= NB_INTERRUPTS)
 		return FAILURE;
 
-	((struct aducm_irq_desc *)desc->extra)->irq_handler[irq_id] = NULL;
+	//TODO
+
 
 	return SUCCESS;
 }
@@ -205,7 +223,8 @@ int32_t irq_global_enable(struct irq_ctrl_desc *desc)
 		return FAILURE;
 
 	aducm_desc = desc->extra;
-	for (uint32_t i = 0; i < NB_EXT_INTERRUPTS; i++)
+	//TODO
+	for (uint32_t i = 0; i < NB_INTERRUPTS; i++) {
 		if (aducm_desc->enabled & (1u << i))
 			NVIC_EnableIRQ(BASE_XINT_NB + i);
 
@@ -224,7 +243,7 @@ int32_t irq_global_disable(struct irq_ctrl_desc *desc)
 		return FAILURE;
 
 	aducm_desc = desc->extra;
-	for (uint32_t i = 0; i < NB_EXT_INTERRUPTS; i++)
+	for (uint32_t i = 0; i < NB_INTERRUPTS; i++)
 		if (aducm_desc->enabled & (1u << i))
 			NVIC_DisableIRQ(BASE_XINT_NB + i);
 
@@ -251,14 +270,18 @@ int32_t irq_source_enable(struct irq_ctrl_desc *desc, uint32_t irq_id)
 	struct aducm_irq_desc *aducm_desc;
 
 	if (!desc || !desc->extra || !initialized ||
-	    irq_id >= NB_EXT_INTERRUPTS)
+	    irq_id >= NB_INTERRUPTS)
 		return FAILURE;
 	aducm_desc = desc->extra;
+	//TODO
+	/*
 	if (aducm_desc->irq_handler[irq_id] == NULL)
 		return FAILURE;
 
-	adi_xint_EnableIRQ(id_map_event[irq_id],
+	if (irq_id != URAT_INT)
+		adi_xint_EnableIRQ(id_map_event[irq_id],
 			   (ADI_XINT_IRQ_MODE)aducm_desc->mode[irq_id]);
+	*/
 	aducm_desc->enabled |= (1u << irq_id);
 
 	return SUCCESS;
@@ -275,7 +298,7 @@ int32_t irq_source_disable(struct irq_ctrl_desc *desc, uint32_t irq_id)
 	struct aducm_irq_desc *aducm_desc;
 
 	if (!desc || !desc->extra || !initialized ||
-	    irq_id >= NB_EXT_INTERRUPTS)
+	    irq_id >= NB_INTERRUPTS)
 		return FAILURE;
 
 	aducm_desc = desc->extra;
